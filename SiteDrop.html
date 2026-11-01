@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SiteDrop – Upload a file, get a website</title>
+<style>
+:root{--bg:#f4f5fb;--card:#fff;--tx:#161a2b;--mut:#6b7090;--ac:#6c4cff;--bd:#cfd2ea;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1120;--card:#1a1d33;--tx:#eef0ff;--mut:#9a9fc4;--bd:#3a3f66}}
+:root[data-theme="dark"]{--bg:#0f1120;--card:#1a1d33;--tx:#eef0ff;--mut:#9a9fc4;--bd:#3a3f66}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:620px;margin:0 auto;padding:40px 20px}
+h1{font-size:30px;margin:0 0 6px}.mut{color:var(--mut);font-size:14px}
+.drop{margin-top:22px;border:2px dashed var(--bd);border-radius:18px;background:var(--card);padding:44px 20px;text-align:center;cursor:pointer;transition:.15s}
+.drop.on{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 10%,var(--card))}
+.drop big{font-size:44px;display:block}
+label{display:block;font-weight:600;margin:18px 0 4px;font-size:13px}
+input{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px 12px;width:100%}
+button{font:inherit;cursor:pointer;border:0;border-radius:10px;padding:12px 16px;background:var(--ac);color:#fff;font-weight:700;width:100%;margin-top:16px}
+button:disabled{opacity:.5;cursor:default}
+.res{margin-top:18px;padding:14px;border-radius:12px;background:var(--card);border:1px solid var(--bd);word-break:break-all}
+.res a{color:var(--ac);font-weight:700}
+.hide{display:none!important}
+#site{position:fixed;inset:0;background:#fff}
+#site iframe{width:100%;height:100%;border:0;display:block}
+#bar{position:fixed;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));background:#000a;color:#fff;font-size:12px;padding:6px 10px;border-radius:20px;text-decoration:none;cursor:pointer}
+</style>
+</head>
+<body>
+<main id="home">
+  <h1>SiteDrop</h1>
+  <div class="mut">Upload an HTML file, pick a name, get a live link. Free.</div>
+  <div class="drop" id="drop"><big>📄</big><b id="dt">Drop your index.html here</b><div class="mut">or click to choose a file (max ~500 KB)</div></div>
+  <input id="file" type="file" accept=".html,.htm,text/html" class="hide">
+  <label>Site name</label>
+  <input id="nm" placeholder="my-cool-site" maxlength="40">
+  <button id="go" disabled>Publish site</button>
+  <div class="mut" id="msg" style="margin-top:10px"></div>
+  <div class="res hide" id="res"></div>
+</main>
+<div id="site" class="hide"><iframe id="fr" sandbox="allow-scripts allow-forms allow-popups allow-pointer-lock" allow="fullscreen"></iframe><a id="bar">Hosted on SiteDrop</a></div>
+<script>
+const $=id=>document.getElementById(id);
+const RESERVED=/^(settings|sidebar|customize|upgrade|downloads|comment-.*)$/;
+let db=null,html=null;
+const slug=s=>s.toLowerCase().replace(/[^a-z0-9-]+/g,"-").replace(/^-+|-+$/g,"").slice(0,40);
+function ready(){$("go").disabled=!(html&&slug($("nm").value)&&db)}
+async function pick(f){
+  if(!f)return;
+  if(f.size>500000){$("msg").textContent="File is too large (max ~500 KB).";return}
+  html=await f.text();$("dt").textContent=f.name+" ("+Math.round(f.size/1024)+" KB)";
+  if(!$("nm").value)$("nm").value=slug(f.name.replace(/\.html?$/i,"").replace(/^index$/,""));
+  $("msg").textContent="";ready();
+}
+$("drop").onclick=()=>$("file").click();
+$("file").onchange=e=>pick(e.target.files[0]);
+$("drop").ondragover=e=>{e.preventDefault();$("drop").classList.add("on")};
+$("drop").ondragleave=()=>$("drop").classList.remove("on");
+$("drop").ondrop=e=>{e.preventDefault();$("drop").classList.remove("on");pick(e.dataTransfer.files[0])};
+$("nm").oninput=ready;
+$("go").onclick=async()=>{
+  const name=slug($("nm").value);
+  if(!name||RESERVED.test(name))return $("msg").textContent="Choose a different site name.";
+  $("go").disabled=true;$("msg").textContent="Publishing…";
+  try{
+    const ref=db.collection("sites").doc(name);
+    if((await ref.get()).exists){$("msg").textContent="That name is taken. Try another.";return}
+    await ref.set({html,created:Date.now()});
+    const url=location.href.split("#")[0]+"#"+name;
+    const r=$("res");r.classList.remove("hide");r.replaceChildren();
+    const a=document.createElement("a");a.href=url;a.target="_blank";a.textContent=url;
+    r.append("Your site is live: ",a);$("msg").textContent="";
+  }catch(e){$("msg").textContent=e&&e.code==="not_granted"?"You don’t have permission to publish.":"Couldn’t publish. Try again."}
+  finally{ready()}
+};
+async function route(){
+  const n=slug(location.hash.slice(1));
+  if(!n){$("site").classList.add("hide");$("home").classList.remove("hide");$("fr").srcdoc="";return}
+  $("home").classList.add("hide");$("site").classList.remove("hide");
+  $("fr").srcdoc="<body style='font-family:sans-serif;padding:30px'>Loading…";
+  try{
+    if(!db)db=await claude.use("db");
+    const s=await db.collection("sites").doc(n).get();
+    $("fr").srcdoc=s.exists?s.data().html:"<body style='font-family:sans-serif;padding:30px'><h2>Site not found</h2><p>Nothing has been published at this name yet.</p>";
+  }catch(e){$("fr").srcdoc="<body style='font-family:sans-serif;padding:30px'>Couldn’t load this site.</body>"}
+}
+$("bar").onclick=()=>{location.hash=""};
+window.addEventListener("hashchange",route);
+(async()=>{try{db=await claude.use("db")}catch(e){}if(!db)$("msg").textContent="Hosting isn’t available in this view.";ready();route()})();
+</script>
+</body>
+</html>
